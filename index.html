@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PushBand Viewer</title>
+<style>
+  :root { --bg:#111418; --card:#1b2027; --fg:#e8ecf1; --mut:#8a94a3; --acc:#3fb950; --warn:#e3b341; --bad:#f85149; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; gap:8px; align-items:center; padding:12px 16px; flex-wrap:wrap; }
+  header h1 { font-size:18px; margin:0 auto 0 0; }
+  button, input { font:inherit; border-radius:8px; border:1px solid #333b46; background:var(--card); color:var(--fg); padding:8px 12px; }
+  button.primary { background:#238636; border-color:#2ea043; }
+  button:disabled { opacity:.4; }
+  main { display:grid; gap:12px; padding:0 16px 16px; grid-template-columns: 1fr; max-width:1000px; margin:auto; }
+  @media (min-width: 800px) { main { grid-template-columns: 1fr 1fr; } .wide { grid-column: span 2; } }
+  .card { background:var(--card); border-radius:12px; padding:16px; }
+  .big { font-size:72px; font-weight:700; line-height:1; font-variant-numeric: tabular-nums; }
+  .lbl { color:var(--mut); font-size:13px; text-transform:uppercase; letter-spacing:.05em; }
+  .row { display:flex; gap:24px; flex-wrap:wrap; margin-top:12px; }
+  .row div b { display:block; font-size:24px; font-variant-numeric: tabular-nums; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric: tabular-nums; }
+  td, th { padding:6px 4px; text-align:right; border-bottom:1px solid #2a313a; }
+  th { color:var(--mut); font-weight:500; font-size:13px; }
+  canvas { width:100%; height:180px; display:block; }
+  .ctl { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .ctl input { width:90px; }
+  #state { color:var(--mut); }
+</style>
+</head>
+<body>
+<header>
+  <h1>PushBand</h1>
+  <span id="state">rozłączony</span>
+  <button id="connect" class="primary">Połącz</button>
+</header>
+<main>
+  <section class="card">
+    <div class="lbl">Ostatnie powtórzenie — MCV [m/s]</div>
+    <div class="big" id="mcv">–</div>
+    <div id="zone" class="lbl" style="margin-top:6px">&nbsp;</div>
+    <div class="row">
+      <div><span class="lbl">Powt.</span><b id="reps">0</b></div>
+      <div><span class="lbl">Vpeak</span><b id="peak">–</b></div>
+      <div><span class="lbl">ROM [cm]</span><b id="rom">–</b></div>
+      <div><span class="lbl">Spadek V</span><b id="vl">–</b></div>
+    </div>
+  </section>
+  <section class="card">
+    <div class="lbl">Sterowanie</div>
+    <div class="ctl" style="margin-top:10px">
+      <label>Ciężar <input id="load" type="number" step="0.5" min="0" value="0"> kg</label>
+      <button id="start" disabled>Start serii</button>
+      <button id="end" disabled>Koniec serii</button>
+    </div>
+    <div class="ctl" style="margin-top:10px">
+      <label>Stop przy spadku <input id="vlstop" type="number" min="5" max="60" value="20"> %</label>
+      <button id="setvl" disabled>Ustaw</button>
+    </div>
+    <div class="ctl" style="margin-top:10px">
+      <button id="calib" disabled>Kalibruj</button>
+      <button id="calib6" disabled>Kalibracja 6 stron</button>
+      <button id="dir" disabled>Kierunek</button>
+      <label><input id="sound" type="checkbox" checked style="width:auto"> dźwięk</label>
+    </div>
+  </section>
+  <section class="card wide">
+    <div class="lbl">Prędkość na żywo [m/s] (bez korekty dryfu)</div>
+    <canvas id="chart"></canvas>
+  </section>
+  <section class="card wide">
+    <div class="lbl">Seria</div>
+    <table>
+      <thead><tr><th>#</th><th>MCV</th><th>MPV</th><th>Vpeak</th><th>ROM cm</th><th>t konc. s</th><th>Moc W</th><th>Spadek %</th></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </section>
+</main>
+<script>
+const SVC = '7e1a0001-5c2b-4f6e-9a3d-1b2c3d4e5f60';
+const REP = '7e1a0002-5c2b-4f6e-9a3d-1b2c3d4e5f60';
+const LIVE = '7e1a0003-5c2b-4f6e-9a3d-1b2c3d4e5f60';
+const CTRL = '7e1a0004-5c2b-4f6e-9a3d-1b2c3d4e5f60';
+const STAT = '7e1a0005-5c2b-4f6e-9a3d-1b2c3d4e5f60';
+const $ = id => document.getElementById(id);
+const STATES = ['kalibracja…', 'gotowy', 'ruch', 'kalibracja 6 stron — kładź czujnik na kolejnych ścianach'];
+const ZONES = [[1.3, 'siła startowa / szybkość', '#58a6ff'], [1.0, 'szybkość–siła', '#3fb950'],
+  [0.75, 'siła–szybkość', '#a5d6a7'], [0.5, 'siła przyspieszająca', '#e3b341'], [0, 'siła maksymalna', '#f85149']];
+
+let ctrl = null, device = null, currentSet = -1, vlStop = 20;
+const live = [];
+
+$('connect').onclick = async () => {
+  if (!navigator.bluetooth) { alert('Ta przeglądarka nie obsługuje Web Bluetooth (użyj Chrome na Androidzie lub PC).'); return; }
+  try {
+    device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'PushBand' }], optionalServices: [SVC] });
+    device.addEventListener('gattserverdisconnected', () => setConnected(false));
+    const server = await device.gatt.connect();
+    const svc = await server.getPrimaryService(SVC);
+    ctrl = await svc.getCharacteristic(CTRL);
+    const rep = await svc.getCharacteristic(REP);
+    rep.addEventListener('characteristicvaluechanged', e => onRep(e.target.value));
+    await rep.startNotifications();
+    const lv = await svc.getCharacteristic(LIVE);
+    lv.addEventListener('characteristicvaluechanged', e => onLive(e.target.value));
+    await lv.startNotifications();
+    const st = await svc.getCharacteristic(STAT);
+    st.addEventListener('characteristicvaluechanged', e => onStatus(e.target.value));
+    await st.startNotifications();
+    onStatus(await st.readValue());
+    setConnected(true);
+  } catch (err) { console.error(err); alert('Błąd połączenia: ' + err.message); }
+};
+
+function setConnected(on) {
+  for (const id of ['start', 'end', 'calib', 'calib6', 'dir', 'setvl']) $(id).disabled = !on;
+  $('connect').textContent = on ? 'Połączono: ' + device.name : 'Połącz';
+  if (!on) $('state').textContent = 'rozłączony';
+}
+
+async function send(bytes) { if (ctrl) await ctrl.writeValueWithResponse(new Uint8Array(bytes)); }
+const u16 = x => [x & 255, (x >> 8) & 255];
+$('start').onclick = () => send([0x01, ...u16(Math.round(parseFloat($('load').value || 0) * 10))]);
+$('end').onclick = () => send([0x02]);
+$('calib').onclick = () => send([0x03]);
+$('calib6').onclick = () => send([0x08]);
+$('dir').onclick = () => send([0x06]);
+$('setvl').onclick = () => send([0x05, Math.round(parseFloat($('vlstop').value))]);
+
+function onStatus(dv) {
+  if (dv.byteLength < 11) return;
+  const state = dv.getUint8(0), active = dv.getUint8(1);
+  const up = dv.getUint8(8);
+  vlStop = dv.getUint8(7);
+  $('state').textContent = STATES[state] + (active ? ' · seria ' + dv.getUint16(2, true) : '') + (up ? '' : ' · koncentryczna w dół');
+  if (document.activeElement !== $('load')) $('load').value = dv.getUint16(5, true) / 10;
+  if (document.activeElement !== $('vlstop')) $('vlstop').value = vlStop;
+}
+
+function onRep(dv) {
+  if (dv.byteLength < 20) return;
+  const r = {
+    set: dv.getUint16(0, true), rep: dv.getUint8(2), mcv: dv.getUint16(3, true) / 1000,
+    mpv: dv.getUint16(5, true) / 1000, peak: dv.getUint16(7, true) / 1000, rom: dv.getUint16(9, true) / 10,
+    conc: dv.getUint16(11, true) / 1000, power: dv.getUint16(15, true), flags: dv.getUint8(17),
+    vl: dv.getUint16(18, true) / 10,
+  };
+  if (r.set !== currentSet) { currentSet = r.set; $('tbody').innerHTML = ''; }
+  const zone = ZONES.find(z => r.mcv >= z[0]);
+  $('mcv').textContent = r.mcv.toFixed(2);
+  $('mcv').style.color = zone[2];
+  $('zone').textContent = zone[1];
+  $('reps').textContent = r.rep;
+  $('peak').textContent = r.peak.toFixed(2);
+  $('rom').textContent = r.rom.toFixed(0);
+  $('vl').textContent = r.vl.toFixed(0) + '%';
+  $('vl').style.color = r.flags & 8 ? 'var(--bad)' : r.vl > vlStop * 0.7 ? 'var(--warn)' : 'var(--fg)';
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${r.rep}</td><td>${r.mcv.toFixed(2)}</td><td>${r.mpv.toFixed(2)}</td><td>${r.peak.toFixed(2)}</td>` +
+    `<td>${r.rom.toFixed(0)}</td><td>${r.conc.toFixed(2)}</td><td>${r.power || '–'}</td><td>${r.vl.toFixed(1)}</td>`;
+  $('tbody').prepend(tr);
+  if ($('sound').checked) beep(r.flags & 8 ? 300 : 880, r.flags & 8 ? 0.5 : 0.08);
+  if (r.flags & 8 && navigator.vibrate) navigator.vibrate([200, 100, 200]);
+}
+
+function onLive(dv) {
+  if (dv.byteLength < 9) return;
+  live.push(dv.getInt16(4, true) / 1000);
+  if (live.length > 250) live.shift();  // 10 s przy 25 Hz
+}
+
+let audio;
+function beep(freq, dur) {
+  audio = audio || new AudioContext();
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.frequency.value = freq; g.gain.value = 0.15;
+  o.connect(g).connect(audio.destination);
+  o.start(); o.stop(audio.currentTime + dur);
+}
+
+function draw() {
+  const c = $('chart'), dpr = devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const x = c.getContext('2d');
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, w, h);
+  const vmax = 2, y = v => h / 2 - (v / vmax) * (h / 2 - 4);
+  x.strokeStyle = '#2a313a'; x.lineWidth = 1;
+  for (const v of [-1, 0, 1]) { x.beginPath(); x.moveTo(0, y(v)); x.lineTo(w, y(v)); x.stroke(); }
+  x.fillStyle = '#8a94a3'; x.font = '11px system-ui';
+  x.fillText('+1', 2, y(1) - 2); x.fillText('0', 2, y(0) - 2); x.fillText('-1', 2, y(-1) - 2);
+  x.strokeStyle = '#58a6ff'; x.lineWidth = 2; x.beginPath();
+  live.forEach((v, i) => { const px = (i / 249) * w; i ? x.lineTo(px, y(v)) : x.moveTo(px, y(v)); });
+  x.stroke();
+  requestAnimationFrame(draw);
+}
+draw();
+</script>
+</body>
+</html>
