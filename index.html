@@ -3,7 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PushBand Viewer</title>
+<meta name="theme-color" content="#111418">
+<meta name="description" content="Pomiar prędkości sztangi (VBT) z urządzenia PushBand przez Bluetooth">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<title>PushBand</title>
 <style>
   :root { --bg:#111418; --card:#1b2027; --fg:#e8ecf1; --mut:#8a94a3; --acc:#3fb950; --warn:#e3b341; --bad:#f85149; }
   * { box-sizing: border-box; }
@@ -33,6 +38,7 @@
 <header>
   <h1>PushBand</h1>
   <span id="state">rozłączony</span>
+  <button id="install" hidden>Zainstaluj aplikację</button>
   <button id="connect" class="primary">Połącz</button>
 </header>
 <main>
@@ -89,35 +95,118 @@ const ZONES = [[1.3, 'siła startowa / szybkość', '#58a6ff'], [1.0, 'szybkoś�
   [0.75, 'siła–szybkość', '#a5d6a7'], [0.5, 'siła przyspieszająca', '#e3b341'], [0, 'siła maksymalna', '#f85149']];
 
 let ctrl = null, device = null, currentSet = -1, vlStop = 20;
+let wantConnected = false, wakeLock = null;
 const live = [];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+// Połączenie GATT z wybranym urządzeniem i subskrypcja powiadomień.
+// Przypisanie oncharacteristicvaluechanged (zamiast addEventListener) nie dubluje
+// obsługi przy ponownym łączeniu.
+async function setupGatt() {
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SVC);
+  ctrl = await svc.getCharacteristic(CTRL);
+  const rep = await svc.getCharacteristic(REP);
+  rep.oncharacteristicvaluechanged = e => onRep(e.target.value);
+  await rep.startNotifications();
+  const lv = await svc.getCharacteristic(LIVE);
+  lv.oncharacteristicvaluechanged = e => onLive(e.target.value);
+  await lv.startNotifications();
+  const st = await svc.getCharacteristic(STAT);
+  st.oncharacteristicvaluechanged = e => onStatus(e.target.value);
+  await st.startNotifications();
+  onStatus(await st.readValue());
+  setConnected(true);
+}
+
+function useDevice(d) {
+  device = d;
+  device.addEventListener('gattserverdisconnected', onDisconnected);
+}
 
 $('connect').onclick = async () => {
+  if (device && device.gatt.connected) {  // drugi klik = rozłącz
+    wantConnected = false;
+    device.gatt.disconnect();
+    return;
+  }
   if (!navigator.bluetooth) { alert('Ta przeglądarka nie obsługuje Web Bluetooth (użyj Chrome na Androidzie lub PC).'); return; }
   try {
-    device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'PushBand' }], optionalServices: [SVC] });
-    device.addEventListener('gattserverdisconnected', () => setConnected(false));
-    const server = await device.gatt.connect();
-    const svc = await server.getPrimaryService(SVC);
-    ctrl = await svc.getCharacteristic(CTRL);
-    const rep = await svc.getCharacteristic(REP);
-    rep.addEventListener('characteristicvaluechanged', e => onRep(e.target.value));
-    await rep.startNotifications();
-    const lv = await svc.getCharacteristic(LIVE);
-    lv.addEventListener('characteristicvaluechanged', e => onLive(e.target.value));
-    await lv.startNotifications();
-    const st = await svc.getCharacteristic(STAT);
-    st.addEventListener('characteristicvaluechanged', e => onStatus(e.target.value));
-    await st.startNotifications();
-    onStatus(await st.readValue());
-    setConnected(true);
-  } catch (err) { console.error(err); alert('Błąd połączenia: ' + err.message); }
+    if (!device) useDevice(await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'PushBand' }], optionalServices: [SVC] }));
+    wantConnected = true;
+    $('state').textContent = 'łączenie…';
+    await setupGatt();
+  } catch (err) {
+    console.error(err);
+    if (err.name === 'NotFoundError') { $('state').textContent = 'rozłączony'; return; }  // zamknięte okno wyboru
+    $('state').textContent = 'nie udało się połączyć';
+    if (confirm('Błąd połączenia: ' + err.message + '\n\nWybrać urządzenie od nowa?')) device = null;
+  }
 };
+
+// Zerwane połączenie (np. za daleko, odłożony telefon) — ponawiamy automatycznie.
+async function onDisconnected() {
+  setConnected(false);
+  for (let i = 1; wantConnected && i <= 20; i++) {
+    $('state').textContent = `połączenie utracone — ponawiam (${i})…`;
+    await sleep(1500);
+    if (!wantConnected) break;
+    try { await setupGatt(); return; } catch (e) { console.warn(e); }
+  }
+  if (wantConnected) $('state').textContent = 'rozłączony — naciśnij Połącz';
+}
 
 function setConnected(on) {
   for (const id of ['start', 'end', 'calib', 'calib6', 'dir', 'setvl']) $(id).disabled = !on;
-  $('connect').textContent = on ? 'Połączono: ' + device.name : 'Połącz';
+  $('connect').textContent = on ? 'Rozłącz' : (device ? 'Połącz z ' + device.name : 'Połącz');
+  $('connect').classList.toggle('primary', !on);
   if (!on) $('state').textContent = 'rozłączony';
+  if (on) keepScreenOn(); else if (wakeLock) { wakeLock.release(); wakeLock = null; }
 }
+
+// Ekran nie gaśnie, gdy urządzenie jest połączone (trening).
+async function keepScreenOn() {
+  try { if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+  if (wakeLock) wakeLock.onrelease = () => { wakeLock = null; };
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && device && device.gatt.connected) keepScreenOn();
+});
+
+// Jeśli przeglądarka pamięta urządzenie z poprzedniej sesji, łączymy się bez okna wyboru.
+// (Działa w nowszych wersjach Chrome; w pozostałych zostaje przycisk Połącz.)
+async function tryAutoConnect() {
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return;
+  try {
+    const d = (await navigator.bluetooth.getDevices()).find(x => (x.name || '').startsWith('PushBand'));
+    if (!d) return;
+    useDevice(d);
+    setConnected(false);
+    if (!d.watchAdvertisements) return;
+    $('state').textContent = 'szukam ' + d.name + '…';
+    const ac = new AbortController();
+    d.addEventListener('advertisementreceived', async () => {
+      ac.abort();
+      if (d.gatt.connected) return;
+      wantConnected = true;
+      try { await setupGatt(); } catch (e) { $('state').textContent = 'rozłączony'; }
+    }, { once: true });
+    await d.watchAdvertisements({ signal: ac.signal });
+  } catch (e) { console.warn(e); }
+}
+tryAutoConnect();
+
+// Instalacja jako aplikacja + praca bez internetu.
+let installEvt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('install').hidden = false; });
+$('install').onclick = async () => {
+  if (!installEvt) return;
+  installEvt.prompt();
+  await installEvt.userChoice;
+  installEvt = null;
+  $('install').hidden = true;
+};
+if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js');
 
 async function send(bytes) { if (ctrl) await ctrl.writeValueWithResponse(new Uint8Array(bytes)); }
 const u16 = x => [x & 255, (x >> 8) & 255];
