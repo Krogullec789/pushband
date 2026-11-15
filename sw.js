@@ -22,8 +22,10 @@ self.addEventListener('fetch', e => {
         if (res.ok) {
           const copy = res.clone();
           caches.open(CACHE).then(c => c.put(e.request, copy));
+          return res;
         }
-        return res;
+        // np. 404, gdy strona jest chwilowo wyłączona — kopia z pamięci, jeśli jest
+        return caches.match(e.request, { ignoreSearch: true }).then(r => r || res);
       })
       .catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match('./index.html')))
   );
