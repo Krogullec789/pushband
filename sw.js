@@ -1,8 +1,10 @@
 // Service worker: aplikacja działa bez internetu (na siłowni często go nie ma).
 // Strategia: najpierw sieć (żeby dostać aktualizacje), a gdy jej nie ma — kopia z pamięci.
-const CACHE = 'pushband-v1';
+const CACHE = 'pushband-v2';
 const FILES = ['./', './index.html', './manifest.webmanifest',
-  './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png'];
+  './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png',
+  './fonts.css', ...['barlow-500', 'barlow-600', 'barlow-condensed-500', 'barlow-condensed-700']
+    .flatMap(f => [`./fonts/${f}-latin.woff2`, `./fonts/${f}-latin-ext.woff2`])];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));

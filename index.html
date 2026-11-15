@@ -2,87 +2,225 @@
 <html lang="pl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#111418">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1c1f22">
 <meta name="description" content="Pomiar prędkości sztangi (VBT) z urządzenia PushBand przez Bluetooth">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="fonts.css">
 <title>PushBand</title>
 <style>
-  :root { --bg:#111418; --card:#1b2027; --fg:#e8ecf1; --mut:#8a94a3; --acc:#3fb950; --warn:#e3b341; --bad:#f85149; }
+  /* Kolory stref = kolory talerzy olimpijskich, od najcięższego (czerwony 25 kg) do najlżejszego (biały 5 kg).
+     Tło całego ekranu zmienia się przy zbliżaniu do progu spadku prędkości (żółte) i po jego przekroczeniu (czerwone). */
+  :root {
+    --mat: #1c1f22; --steel: #2a2f34; --steel-hi: #363c43; --chalk: #eef0ec; --dust: #9aa1a6;
+    --red: #d93a3a; --blue: #2f6fd6; --yellow: #f0c232; --green: #2fa35b; --white: #f4f4f2;
+    --bg: var(--mat); --fg: var(--chalk); --muted: var(--dust); --surface: var(--steel); --surface-hi: var(--steel-hi);
+    --line: rgba(238, 240, 236, .14);
+    --num: 'Barlow Condensed', 'Arial Narrow', system-ui, sans-serif;
+  }
+  body[data-alert="warn"] { --bg: var(--yellow); --fg: #1c1f22; --muted: rgba(28, 31, 34, .72);
+    --surface: rgba(28, 31, 34, .12); --surface-hi: rgba(28, 31, 34, .2); --line: rgba(28, 31, 34, .25); }
+  body[data-alert="stop"] { --bg: var(--red); --fg: #fff; --muted: rgba(255, 255, 255, .8);
+    --surface: rgba(0, 0, 0, .18); --surface-hi: rgba(0, 0, 0, .28); --line: rgba(255, 255, 255, .3); }
+
   * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg); }
-  header { display:flex; gap:8px; align-items:center; padding:12px 16px; flex-wrap:wrap; }
-  header h1 { font-size:18px; margin:0 auto 0 0; }
-  button, input { font:inherit; border-radius:8px; border:1px solid #333b46; background:var(--card); color:var(--fg); padding:8px 12px; }
-  button.primary { background:#238636; border-color:#2ea043; }
-  button:disabled { opacity:.4; }
-  main { display:grid; gap:12px; padding:0 16px 16px; grid-template-columns: 1fr; max-width:1000px; margin:auto; }
-  @media (min-width: 800px) { main { grid-template-columns: 1fr 1fr; } .wide { grid-column: span 2; } }
-  .card { background:var(--card); border-radius:12px; padding:16px; }
-  .big { font-size:72px; font-weight:700; line-height:1; font-variant-numeric: tabular-nums; }
-  .lbl { color:var(--mut); font-size:13px; text-transform:uppercase; letter-spacing:.05em; }
-  .row { display:flex; gap:24px; flex-wrap:wrap; margin-top:12px; }
-  .row div b { display:block; font-size:24px; font-variant-numeric: tabular-nums; }
-  table { width:100%; border-collapse:collapse; font-variant-numeric: tabular-nums; }
-  td, th { padding:6px 4px; text-align:right; border-bottom:1px solid #2a313a; }
-  th { color:var(--mut); font-weight:500; font-size:13px; }
-  canvas { width:100%; height:180px; display:block; }
-  .ctl { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
-  .ctl input { width:90px; }
-  #state { color:var(--mut); }
+  html { -webkit-text-size-adjust: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 500 17px/1.4 Barlow, system-ui, sans-serif;
+    transition: background-color .25s, color .25s; -webkit-tap-highlight-color: transparent; }
+  button, input { font: inherit; color: inherit; }
+  button { border: 0; border-radius: 10px; background: var(--surface); min-height: 48px; padding: 0 16px; cursor: pointer;
+    touch-action: manipulation; }
+  button:active { background: var(--surface-hi); }
+  button:disabled { opacity: .35; cursor: default; }
+  :focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+  [hidden] { display: none !important; }
+
+  .app { min-height: 100dvh; display: grid; grid-template-rows: auto 1fr auto; max-width: 560px; margin: 0 auto;
+    padding: env(safe-area-inset-top) 0 0; }
+
+  /* --- pasek połączenia --- */
+  .bar { display: flex; gap: 8px; padding: 10px 12px; align-items: center; }
+  .conn { flex: 1; display: flex; align-items: center; gap: 10px; text-align: left; background: transparent; padding: 0 8px; min-width: 0; }
+  .conn:active { background: var(--surface); }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--dust); flex: none; }
+  .dot[data-s="on"] { background: var(--green); box-shadow: 0 0 0 4px rgba(47, 163, 91, .25); }
+  .dot[data-s="busy"] { background: var(--yellow); animation: pulse 1s infinite alternate; }
+  body[data-alert="warn"] .dot[data-s="on"], body[data-alert="stop"] .dot[data-s="on"] { background: var(--fg); box-shadow: none; }
+  .conn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .batt { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .icon { width: 48px; padding: 0; display: grid; place-items: center; background: transparent; }
+  .icon svg { width: 26px; height: 26px; }
+  @keyframes pulse { to { opacity: .35; } }
+
+  /* --- odczyt --- */
+  .readout { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;
+    padding: 4px 16px 12px; min-height: 0; }
+  .setinfo { margin: 0; color: var(--muted); font-size: 1.05rem; }
+  .mcv { display: block; font: 700 clamp(7.5rem, 44vw, 15rem)/.84 var(--num); font-variant-numeric: tabular-nums;
+    letter-spacing: -.02em; margin: 6px 0 2px; }
+  .mcv[data-empty] { color: var(--muted); }
+  .unit { margin: 0; font: 500 1.35rem/1.2 var(--num); color: var(--muted); }
+  .zone { display: flex; align-items: center; gap: 10px; margin-top: 12px; font: 500 1.35rem/1.2 var(--num); min-height: 28px; }
+  /* talerz: kolorowy krąg z otworem na gryf */
+  .plate { width: 26px; height: 26px; border-radius: 50%; flex: none;
+    background: radial-gradient(circle, var(--bg) 0 4px, var(--plate, transparent) 4.5px); transition: background .25s; }
+  .hint { margin: 14px 0 0; font-size: 1.15rem; max-width: 22em; }
+  .alert-msg { margin: 14px 0 0; font: 700 2rem/1 var(--num); }
+
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; margin: 22px 0 0; }
+  .stats div { padding: 0 4px; }
+  .stats div + div { border-left: 1px solid var(--line); }
+  .stats dt { color: var(--muted); font-size: .95rem; }
+  .stats dd { margin: 0; font: 700 2.7rem/1 var(--num); font-variant-numeric: tabular-nums; }
+
+  .bars { position: relative; display: flex; align-items: flex-end; justify-content: center; gap: 6px; width: 100%;
+    height: 76px; margin-top: 20px; border-bottom: 1px solid var(--line); }
+  .bars i { flex: 0 1 28px; border-radius: 4px 4px 0 0; background: var(--plate); min-height: 4px; transition: height .2s; }
+  .bars i.last { outline: 2px solid var(--fg); outline-offset: 2px; }
+  /* na żółtym/czerwonym tle talerz tego samego koloru by zniknął — obwódka */
+  body:not([data-alert="none"]) .bars i, body:not([data-alert="none"]) .plate { box-shadow: 0 0 0 2px var(--fg); }
+  .bars .limit { position: absolute; left: 0; right: 0; border-top: 2px dashed var(--muted); }
+  .bars:empty::after { content: 'Tu pojawią się słupki kolejnych powtórzeń'; align-self: center; color: var(--muted); font-size: .95rem; }
+
+  /* --- dolny panel: ciężar + seria --- */
+  .dock { position: sticky; bottom: 0; background: var(--bg); padding: 10px 12px calc(12px + env(safe-area-inset-bottom));
+    transition: background-color .25s; }
+  .load { display: grid; grid-template-columns: 76px 1fr 76px; gap: 8px; align-items: center; margin-bottom: 10px; }
+  .step { min-height: 60px; font: 700 1.5rem/1 var(--num); }
+  .loadval { display: flex; align-items: baseline; justify-content: center; gap: 6px; }
+  .loadval input { width: 4.2ch; background: transparent; border: 0; border-bottom: 2px solid var(--line); text-align: right;
+    font: 700 2.6rem/1.1 var(--num); font-variant-numeric: tabular-nums; padding: 0; border-radius: 0; }
+  .loadval span { font: 500 1.4rem/1 var(--num); color: var(--muted); }
+  .go { width: 100%; min-height: 68px; font: 700 1.75rem/1 var(--num); background: var(--chalk); color: var(--mat); }
+  .go:active { background: #d5d8d2; }
+  .go[data-mode="end"] { background: transparent; color: var(--fg); box-shadow: inset 0 0 0 3px var(--fg); }
+  body[data-alert="stop"] .go[data-mode="end"] { background: #fff; color: var(--red); box-shadow: none; }
+
+  /* --- szczegóły pod spodem --- */
+  .details { max-width: 560px; margin: 0 auto; padding: 24px 16px calc(32px + env(safe-area-inset-bottom)); }
+  .details h2 { font: 700 1.6rem/1.1 var(--num); margin: 0 0 12px; }
+  .details h3 { font: 500 1.2rem/1.2 var(--num); margin: 28px 0 8px; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  td, th { padding: 9px 4px; text-align: right; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: .85rem; }
+  td:first-child, th:first-child { text-align: left; }
+  .empty { color: var(--muted); }
+  canvas { width: 100%; height: 160px; display: block; }
+
+  /* --- ustawienia (panel od dołu) --- */
+  dialog { border: 0; padding: 0; margin: auto auto 0; width: 100%; max-width: 560px; max-height: 92dvh; border-radius: 18px 18px 0 0;
+    background: var(--steel); color: var(--chalk); }
+  dialog::backdrop { background: rgba(0, 0, 0, .55); }
+  .sheet { padding: 8px 16px calc(20px + env(safe-area-inset-bottom)); }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; background: var(--steel);
+    padding: 10px 0; }
+  .sheet-head h2 { font: 700 1.7rem/1 var(--num); margin: 0; }
+  .sheet section { padding: 16px 0; border-top: 1px solid rgba(238, 240, 236, .1); }
+  .sheet h3 { margin: 0 0 4px; font-size: 1.05rem; font-weight: 600; }
+  .sheet p { margin: 0 0 12px; color: var(--dust); font-size: .95rem; }
+  .sheet button { background: var(--steel-hi); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .stepper { display: grid; grid-template-columns: 64px 1fr 64px; gap: 8px; align-items: center; max-width: 320px; }
+  .stepper output { text-align: center; font: 700 2rem/1 var(--num); font-variant-numeric: tabular-nums; }
+  .seg { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; background: var(--mat); padding: 4px; border-radius: 12px; max-width: 360px; }
+  .seg button { background: transparent; }
+  .seg button[aria-pressed="true"] { background: var(--chalk); color: var(--mat); }
+  .switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; }
+  .switch input { width: 52px; height: 30px; accent-color: var(--green); }
+  .switch .sub { color: var(--dust); font-size: .9rem; }
+  .done { background: var(--chalk) !important; color: var(--mat); font-weight: 600; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
-<body>
-<header>
-  <h1>PushBand</h1>
-  <span id="state">rozłączony</span>
-  <button id="install" hidden>Zainstaluj aplikację</button>
-  <button id="connect" class="primary">Połącz</button>
-</header>
-<main>
-  <section class="card">
-    <div class="lbl">Ostatnie powtórzenie — MCV [m/s]</div>
-    <div class="big" id="mcv">–</div>
-    <div id="zone" class="lbl" style="margin-top:6px">&nbsp;</div>
-    <div class="row">
-      <div><span class="lbl">Powt.</span><b id="reps">0</b></div>
-      <div><span class="lbl">Vpeak</span><b id="peak">–</b></div>
-      <div><span class="lbl">ROM [cm]</span><b id="rom">–</b></div>
-      <div><span class="lbl">Spadek V</span><b id="vl">–</b></div>
+<body data-alert="none">
+<div class="app">
+  <header class="bar">
+    <button id="conn" class="conn" aria-live="polite">
+      <span id="dot" class="dot"></span><span id="connText" class="conn-text">Brak połączenia</span><span id="batt" class="batt"></span>
+    </button>
+    <button id="openSettings" class="icon" aria-label="Ustawienia">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>
+      </svg>
+    </button>
+  </header>
+
+  <main class="readout">
+    <p id="setInfo" class="setinfo">Seria nie trwa</p>
+    <output id="mcv" class="mcv" data-empty>–</output>
+    <p class="unit">m/s</p>
+    <div class="zone"><span id="plate" class="plate"></span><span id="zoneName"></span></div>
+    <p id="hint" class="hint" hidden></p>
+    <p id="alertMsg" class="alert-msg" hidden></p>
+    <dl class="stats">
+      <div><dt>Powtórzenie</dt><dd id="reps">0</dd></div>
+      <div><dt>Spadek</dt><dd id="vl">–</dd></div>
+      <div><dt>Vpeak</dt><dd id="peak">–</dd></div>
+    </dl>
+    <div id="bars" class="bars" aria-label="Prędkość kolejnych powtórzeń w serii"></div>
+  </main>
+
+  <footer class="dock">
+    <div class="load">
+      <button id="loadMinus" class="step" aria-label="Zmniejsz ciężar o 2,5 kg">−2,5</button>
+      <label class="loadval"><input id="load" inputmode="decimal" enterkeyhint="done" value="0" aria-label="Ciężar w kilogramach"><span>kg</span></label>
+      <button id="loadPlus" class="step" aria-label="Zwiększ ciężar o 2,5 kg">+2,5</button>
     </div>
-  </section>
-  <section class="card">
-    <div class="lbl">Sterowanie</div>
-    <div class="ctl" style="margin-top:10px">
-      <label>Ciężar <input id="load" type="number" step="0.5" min="0" value="0"> kg</label>
-      <button id="start" disabled>Start serii</button>
-      <button id="end" disabled>Koniec serii</button>
-    </div>
-    <div class="ctl" style="margin-top:10px">
-      <label>Stop przy spadku <input id="vlstop" type="number" min="5" max="60" value="20"> %</label>
-      <button id="setvl" disabled>Ustaw</button>
-    </div>
-    <div class="ctl" style="margin-top:10px">
-      <button id="calib" disabled>Kalibruj</button>
-      <button id="calib6" disabled>Kalibracja 6 stron</button>
-      <button id="dir" disabled>Kierunek</button>
-      <label><input id="sound" type="checkbox" checked style="width:auto"> dźwięk</label>
-    </div>
-  </section>
-  <section class="card wide">
-    <div class="lbl">Prędkość na żywo [m/s] (bez korekty dryfu)</div>
-    <canvas id="chart"></canvas>
-  </section>
-  <section class="card wide">
-    <div class="lbl">Seria</div>
-    <table>
-      <thead><tr><th>#</th><th>MCV</th><th>MPV</th><th>Vpeak</th><th>ROM cm</th><th>t konc. s</th><th>Moc W</th><th>Spadek %</th></tr></thead>
-      <tbody id="tbody"></tbody>
-    </table>
-  </section>
-</main>
+    <button id="setBtn" class="go" data-mode="connect">Połącz z czujnikiem</button>
+  </footer>
+</div>
+
+<section class="details">
+  <h2>Szczegóły serii</h2>
+  <table>
+    <thead><tr><th>#</th><th>MCV</th><th>MPV</th><th>Vpeak</th><th>ROM cm</th><th>Czas s</th><th>Moc W</th><th>Spadek</th></tr></thead>
+    <tbody id="tbody"><tr><td colspan="8" class="empty">Brak powtórzeń w tej serii</td></tr></tbody>
+  </table>
+  <h3>Prędkość na żywo, m/s (bez korekty dryfu)</h3>
+  <canvas id="chart"></canvas>
+</section>
+
+<dialog id="settings" aria-labelledby="settingsTitle">
+  <div class="sheet">
+    <div class="sheet-head"><h2 id="settingsTitle">Ustawienia</h2><button id="closeSettings" class="done">Gotowe</button></div>
+    <section>
+      <h3>Koniec serii przy spadku prędkości</h3>
+      <p>Ekran robi się żółty przy 70% progu i czerwony po jego przekroczeniu.</p>
+      <div class="stepper">
+        <button id="vlMinus" aria-label="Zmniejsz próg">−5</button>
+        <output id="vlStopOut">20%</output>
+        <button id="vlPlus" aria-label="Zwiększ próg">+5</button>
+      </div>
+    </section>
+    <section>
+      <h3>Faza koncentryczna</h3>
+      <p>W dół np. przy ćwiczeniach, w których ciężar opuszcza się aktywnie.</p>
+      <div class="seg" role="group" aria-label="Kierunek fazy koncentrycznej">
+        <button id="dirUp" aria-pressed="true">W górę</button>
+        <button id="dirDown" aria-pressed="false">W dół</button>
+      </div>
+    </section>
+    <section>
+      <label class="switch"><span><b>Głos</b><br><span class="sub">Czyta prędkość po każdym powtórzeniu</span></span><input id="voice" type="checkbox" checked></label>
+      <label class="switch"><span><b>Sygnał dźwiękowy</b></span><input id="sound" type="checkbox"></label>
+    </section>
+    <section>
+      <h3>Kalibracja</h3>
+      <p>Zerowanie: połóż czujnik nieruchomo na 1 s. Kalibracja 6 stron: raz po zmianie płytki.</p>
+      <div class="row"><button id="calib">Wyzeruj czujnik</button><button id="calib6">Kalibracja 6 stron</button></div>
+    </section>
+    <section>
+      <h3>Urządzenie</h3>
+      <p id="devInfo">Nie wybrano urządzenia.</p>
+      <div class="row"><button id="pickDevice">Wybierz inne urządzenie</button><button id="disconnect">Rozłącz</button></div>
+      <div class="row" style="margin-top:8px"><button id="install" hidden>Zainstaluj aplikację</button></div>
+    </section>
+  </div>
+</dialog>
+
 <script>
 const SVC = '7e1a0001-5c2b-4f6e-9a3d-1b2c3d4e5f60';
 const REP = '7e1a0002-5c2b-4f6e-9a3d-1b2c3d4e5f60';
@@ -90,19 +228,32 @@ const LIVE = '7e1a0003-5c2b-4f6e-9a3d-1b2c3d4e5f60';
 const CTRL = '7e1a0004-5c2b-4f6e-9a3d-1b2c3d4e5f60';
 const STAT = '7e1a0005-5c2b-4f6e-9a3d-1b2c3d4e5f60';
 const $ = id => document.getElementById(id);
-const STATES = ['kalibracja…', 'gotowy', 'ruch', 'kalibracja 6 stron — kładź czujnik na kolejnych ścianach'];
-const ZONES = [[1.3, 'siła startowa / szybkość', '#58a6ff'], [1.0, 'szybkość–siła', '#3fb950'],
-  [0.75, 'siła–szybkość', '#a5d6a7'], [0.5, 'siła przyspieszająca', '#e3b341'], [0, 'siła maksymalna', '#f85149']];
+// Strefy MCV i kolory talerzy (od najcięższego).
+const ZONES = [[1.3, 'szybkość', 'var(--white)'], [1.0, 'szybkość–siła', 'var(--green)'],
+  [0.75, 'siła–szybkość', 'var(--yellow)'], [0.5, 'siła przyspieszająca', 'var(--blue)'], [0, 'siła maksymalna', 'var(--red)']];
+const FLAG_STOP = 8;
+const DEMO = new URLSearchParams(location.search).has('demo');
 
-let ctrl = null, device = null, currentSet = -1, vlStop = 20;
-let wantConnected = false, wakeLock = null;
+let ctrl = null, device = null, wantConnected = false, wakeLock = null, connected = false;
+let dev = { state: -1, active: false, setId: 0, vlStop: 20, up: true };
+let setReps = [], shownSet = -1, loadEditedAt = 0;
 const live = [];
+let liveDirty = false;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
+const fmt = (v, d = 2) => v.toFixed(d).replace('.', ',');
 
-// Połączenie GATT z wybranym urządzeniem i subskrypcja powiadomień.
-// Przypisanie oncharacteristicvaluechanged (zamiast addEventListener) nie dubluje
-// obsługi przy ponownym łączeniu.
+// ---------------------------------------------------------------- preferencje (tylko w tej przeglądarce)
+const prefs = (() => { try { return JSON.parse(localStorage.getItem('pushband') || '{}'); } catch (e) { return {}; } })();
+function savePrefs() { try { localStorage.setItem('pushband', JSON.stringify(prefs)); } catch (e) {} }
+$('voice').checked = prefs.voice !== false;
+$('sound').checked = !!prefs.sound;
+$('voice').onchange = () => { prefs.voice = $('voice').checked; savePrefs(); };
+$('sound').onchange = () => { prefs.sound = $('sound').checked; savePrefs(); };
+if (prefs.load != null) $('load').value = String(prefs.load).replace('.', ',');
+
+// ---------------------------------------------------------------- Bluetooth
 async function setupGatt() {
+  setConnText('busy', 'Łączenie z ' + device.name + '…');
   const server = await device.gatt.connect();
   const svc = await server.getPrimaryService(SVC);
   ctrl = await svc.getCharacteristic(CTRL);
@@ -117,86 +268,301 @@ async function setupGatt() {
   await st.startNotifications();
   onStatus(await st.readValue());
   setConnected(true);
+  readBattery(server);
 }
 
+// Poziom baterii (standardowa usługa; ESP32 jej nie ma, a starsze parowania nie mają do niej dostępu).
+async function readBattery(server) {
+  try {
+    const b = await (await server.getPrimaryService('battery_service')).getCharacteristic('battery_level');
+    b.oncharacteristicvaluechanged = e => showBattery(e.target.value.getUint8(0));
+    showBattery((await b.readValue()).getUint8(0));
+    await b.startNotifications();
+  } catch (e) { showBattery(null); }
+}
+function showBattery(pct) { $('batt').textContent = pct == null ? '' : pct + '%'; }
+
 function useDevice(d) {
+  if (device === d) return;
   device = d;
   device.addEventListener('gattserverdisconnected', onDisconnected);
 }
 
-$('connect').onclick = async () => {
-  if (device && device.gatt.connected) {  // drugi klik = rozłącz
-    wantConnected = false;
-    device.gatt.disconnect();
-    return;
-  }
-  if (!navigator.bluetooth) { alert('Ta przeglądarka nie obsługuje Web Bluetooth (użyj Chrome na Androidzie lub PC).'); return; }
+async function connect(pickNew = false) {
+  if (DEMO) return;
+  if (!navigator.bluetooth) { setConnText('off', 'Ta przeglądarka nie obsługuje Bluetooth. Otwórz w Chrome.'); return; }
   try {
-    if (!device) useDevice(await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'PushBand' }], optionalServices: [SVC] }));
+    if (pickNew || !device) {
+      useDevice(await navigator.bluetooth.requestDevice({
+        filters: [{ namePrefix: 'PushBand' }], optionalServices: [SVC, 'battery_service'] }));
+    }
     wantConnected = true;
-    $('state').textContent = 'łączenie…';
     await setupGatt();
   } catch (err) {
     console.error(err);
-    if (err.name === 'NotFoundError') { $('state').textContent = 'rozłączony'; return; }  // zamknięte okno wyboru
-    $('state').textContent = 'nie udało się połączyć';
-    if (confirm('Błąd połączenia: ' + err.message + '\n\nWybrać urządzenie od nowa?')) device = null;
+    if (err.name === 'NotFoundError') { setConnected(false); return; }  // zamknięte okno wyboru
+    setConnText('off', 'Nie udało się połączyć. Włącz czujnik albo wybierz inne urządzenie w ustawieniach.');
   }
-};
+}
 
-// Zerwane połączenie (np. za daleko, odłożony telefon) — ponawiamy automatycznie.
+function disconnect() {
+  wantConnected = false;
+  if (device && device.gatt.connected) device.gatt.disconnect();
+}
+
+// Zerwane połączenie (np. za daleko) — ponawiamy automatycznie.
 async function onDisconnected() {
   setConnected(false);
   for (let i = 1; wantConnected && i <= 20; i++) {
-    $('state').textContent = `połączenie utracone — ponawiam (${i})…`;
+    setConnText('busy', `Połączenie utracone, ponawiam (${i})…`);
     await sleep(1500);
     if (!wantConnected) break;
     try { await setupGatt(); return; } catch (e) { console.warn(e); }
   }
-  if (wantConnected) $('state').textContent = 'rozłączony — naciśnij Połącz';
+  if (wantConnected) setConnText('off', 'Brak połączenia. Dotknij, aby połączyć.');
+}
+
+function setConnText(s, text) {
+  $('dot').dataset.s = s;
+  $('connText').textContent = text;
 }
 
 function setConnected(on) {
-  for (const id of ['start', 'end', 'calib', 'calib6', 'dir', 'setvl']) $(id).disabled = !on;
-  $('connect').textContent = on ? 'Rozłącz' : (device ? 'Połącz z ' + device.name : 'Połącz');
-  $('connect').classList.toggle('primary', !on);
-  if (!on) $('state').textContent = 'rozłączony';
+  connected = on;
+  if (on) setConnText('on', device ? device.name : 'PushBand');
+  else { setConnText('off', device ? 'Połącz z ' + device.name : 'Brak połączenia'); showBattery(null); dev.state = -1; }
+  $('devInfo').textContent = device ? (on ? 'Połączono z ' : 'Ostatnio używane: ') + device.name + '.' : 'Nie wybrano urządzenia.';
+  for (const id of ['calib', 'calib6', 'dirUp', 'dirDown', 'vlMinus', 'vlPlus', 'disconnect']) $(id).disabled = !on;
+  renderDevice();
   if (on) keepScreenOn(); else if (wakeLock) { wakeLock.release(); wakeLock = null; }
 }
 
-// Ekran nie gaśnie, gdy urządzenie jest połączone (trening).
+// Ekran nie gaśnie, gdy czujnik jest połączony.
 async function keepScreenOn() {
   try { if ('wakeLock' in navigator && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
   if (wakeLock) wakeLock.onrelease = () => { wakeLock = null; };
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && device && device.gatt.connected) keepScreenOn();
+  if (document.visibilityState === 'visible' && connected) keepScreenOn();
 });
 
-// Jeśli przeglądarka pamięta urządzenie z poprzedniej sesji, łączymy się bez okna wyboru.
-// (Działa w nowszych wersjach Chrome; w pozostałych zostaje przycisk Połącz.)
+// Przeglądarka pamięta urządzenia z poprzednich sesji: nasłuchujemy wszystkich PushBand
+// i łączymy się z pierwszym, które jest włączone (nadaje).
 async function tryAutoConnect() {
-  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return;
+  if (DEMO || !navigator.bluetooth || !navigator.bluetooth.getDevices) return;
   try {
-    const d = (await navigator.bluetooth.getDevices()).find(x => (x.name || '').startsWith('PushBand'));
-    if (!d) return;
-    useDevice(d);
+    const known = (await navigator.bluetooth.getDevices()).filter(x => (x.name || '').startsWith('PushBand'));
+    if (!known.length) return;
+    useDevice(known[0]);
     setConnected(false);
-    if (!d.watchAdvertisements) return;
-    $('state').textContent = 'szukam ' + d.name + '…';
+    if (!known[0].watchAdvertisements) return;
+    setConnText('busy', 'Szukam czujnika…');
     const ac = new AbortController();
-    d.addEventListener('advertisementreceived', async () => {
-      ac.abort();
-      if (d.gatt.connected) return;
-      wantConnected = true;
-      try { await setupGatt(); } catch (e) { $('state').textContent = 'rozłączony'; }
-    }, { once: true });
-    await d.watchAdvertisements({ signal: ac.signal });
+    for (const d of known) {
+      d.addEventListener('advertisementreceived', async () => {
+        if (ac.signal.aborted) return;
+        ac.abort();
+        if (connected) return;
+        useDevice(d);
+        wantConnected = true;
+        try { await setupGatt(); } catch (e) { setConnected(false); }
+      }, { once: true });
+      d.watchAdvertisements({ signal: ac.signal }).catch(e => console.warn(e));
+    }
   } catch (e) { console.warn(e); }
 }
+renderDevice();
 tryAutoConnect();
 
-// Instalacja jako aplikacja + praca bez internetu.
+// ---------------------------------------------------------------- komendy
+async function send(bytes) {
+  if (DEMO) return demoCommand(bytes);
+  if (ctrl) await ctrl.writeValueWithResponse(new Uint8Array(bytes));
+}
+const u16 = x => [x & 255, (x >> 8) & 255];
+const loadKg = () => { const v = parseFloat(($('load').value || '0').replace(',', '.')); return isFinite(v) ? Math.max(0, Math.min(500, v)) : 0; };
+
+function setLoad(v) {
+  v = Math.max(0, Math.min(500, Math.round(v * 2) / 2));
+  $('load').value = fmt(v, v % 1 ? 1 : 0);
+  prefs.load = v; savePrefs();
+  loadEditedAt = Date.now();
+  if (connected) send([0x04, ...u16(Math.round(v * 10))]);
+}
+$('loadMinus').onclick = () => setLoad(loadKg() - 2.5);
+$('loadPlus').onclick = () => setLoad(loadKg() + 2.5);
+$('load').onchange = () => setLoad(loadKg());
+$('load').onfocus = () => $('load').select();
+
+$('setBtn').onclick = () => {
+  const mode = $('setBtn').dataset.mode;
+  if (mode === 'connect') connect();
+  else if (mode === 'start') send([0x01, ...u16(Math.round(loadKg() * 10))]);
+  else if (mode === 'end') send([0x02]);
+};
+$('conn').onclick = () => { if (!connected) connect(); else $('settings').showModal(); };
+$('openSettings').onclick = () => $('settings').showModal();
+$('closeSettings').onclick = () => $('settings').close();
+$('settings').addEventListener('click', e => { if (e.target === $('settings')) $('settings').close(); });
+$('calib').onclick = () => send([0x03]);
+$('calib6').onclick = () => { send([0x08]); $('settings').close(); };
+$('dirUp').onclick = () => send([0x06, 1]);
+$('dirDown').onclick = () => send([0x06, 0]);
+$('vlMinus').onclick = () => send([0x05, Math.max(5, dev.vlStop - 5)]);
+$('vlPlus').onclick = () => send([0x05, Math.min(60, dev.vlStop + 5)]);
+$('pickDevice').onclick = () => { $('settings').close(); disconnect(); connect(true); };
+$('disconnect').onclick = () => { disconnect(); $('settings').close(); };
+
+// ---------------------------------------------------------------- dane z urządzenia
+// Status: u8 stan | u8 seria_aktywna | u16 id_serii | u8 powt. | u16 ciężar×10 | u8 próg % | u8 kierunek | u16 ostatnia MCV
+function onStatus(dv) {
+  if (dv.byteLength < 11) return;
+  dev = { state: dv.getUint8(0), active: !!dv.getUint8(1), setId: dv.getUint16(2, true), vlStop: dv.getUint8(7), up: !!dv.getUint8(8) };
+  const load = dv.getUint16(5, true) / 10;
+  if (document.activeElement !== $('load') && Date.now() - loadEditedAt > 2000) $('load').value = fmt(load, load % 1 ? 1 : 0);
+  if (dev.active && dev.setId !== shownSet) startNewSet(dev.setId);
+  renderDevice();
+}
+
+function renderDevice() {
+  $('vlStopOut').textContent = dev.vlStop + '%';
+  $('dirUp').setAttribute('aria-pressed', dev.up);
+  $('dirDown').setAttribute('aria-pressed', !dev.up);
+  const btn = $('setBtn');
+  if (!connected) { btn.dataset.mode = 'connect'; btn.textContent = device ? 'Połącz z ' + device.name : 'Połącz z czujnikiem'; }
+  else if (dev.active) { btn.dataset.mode = 'end'; btn.textContent = 'Zakończ serię'; }
+  else { btn.dataset.mode = 'start'; btn.textContent = 'Zacznij serię'; }
+  btn.disabled = connected && (dev.state === 0 || dev.state === 3);
+
+  $('setInfo').textContent = !connected ? 'Czujnik nie jest połączony'
+    : dev.active ? `Seria ${dev.setId}, ${$('load').value} kg` : 'Seria zacznie się przy pierwszym powtórzeniu';
+  const hints = { 0: 'Nie ruszaj czujnika, trwa zerowanie…',
+    3: 'Kalibracja 6 stron: kładź czujnik na kolejnych ścianach, na każdej ok. 3 s bez ruchu.' };
+  $('hint').hidden = !(connected && hints[dev.state]);
+  $('hint').textContent = hints[dev.state] || '';
+  if (!dev.up && connected && !hints[dev.state]) { $('hint').hidden = false; $('hint').textContent = 'Faza koncentryczna: w dół'; }
+}
+
+function startNewSet(id) {
+  shownSet = id;
+  setReps = [];
+  document.body.dataset.alert = 'none';
+  $('alertMsg').hidden = true;
+  $('mcv').textContent = '–'; $('mcv').dataset.empty = '';
+  $('reps').textContent = '0'; $('vl').textContent = '–'; $('peak').textContent = '–';
+  $('zoneName').textContent = ''; $('plate').style.removeProperty('--plate');
+  $('tbody').innerHTML = '<tr><td colspan="8" class="empty">Brak powtórzeń w tej serii</td></tr>';
+  renderBars();
+}
+
+// RepResult: u16 seria | u8 powt | u16 MCV | u16 MPV | u16 Vpeak | u16 ROM mm | u16 t_konc ms | u16 t_szczyt | u16 moc | u8 flagi | u16 spadek×10
+function onRep(dv) {
+  if (dv.byteLength < 20) return;
+  const r = {
+    set: dv.getUint16(0, true), rep: dv.getUint8(2), mcv: dv.getUint16(3, true) / 1000,
+    mpv: dv.getUint16(5, true) / 1000, peak: dv.getUint16(7, true) / 1000, rom: dv.getUint16(9, true) / 10,
+    conc: dv.getUint16(11, true) / 1000, power: dv.getUint16(15, true), flags: dv.getUint8(17),
+    vl: dv.getUint16(18, true) / 10,
+  };
+  if (r.set !== shownSet) startNewSet(r.set);
+  if (setReps.some(x => x.rep === r.rep)) return;  // odczyt tej samej wartości po ponownym połączeniu
+  setReps.push(r);
+  const zone = ZONES.find(z => r.mcv >= z[0]);
+  $('mcv').textContent = fmt(r.mcv); delete $('mcv').dataset.empty;
+  $('zoneName').textContent = zone[1];
+  $('plate').style.setProperty('--plate', zone[2]);
+  $('reps').textContent = r.rep;
+  $('peak').textContent = fmt(r.peak);
+  $('vl').textContent = Math.round(r.vl) + '%';
+
+  const stop = r.flags & FLAG_STOP;
+  document.body.dataset.alert = stop ? 'stop' : r.vl >= dev.vlStop * 0.7 ? 'warn' : 'none';
+  $('alertMsg').hidden = !stop;
+  $('alertMsg').textContent = 'Koniec serii';
+
+  if (setReps.length === 1) $('tbody').innerHTML = '';
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${r.rep}</td><td>${fmt(r.mcv)}</td><td>${fmt(r.mpv)}</td><td>${fmt(r.peak)}</td>` +
+    `<td>${r.rom.toFixed(0)}</td><td>${fmt(r.conc)}</td><td>${r.power || '–'}</td><td>${Math.round(r.vl)}%</td>`;
+  $('tbody').prepend(tr);
+  renderBars();
+  announce(r, stop);
+}
+
+function renderBars() {
+  const box = $('bars');
+  box.innerHTML = '';
+  if (!setReps.length) return;
+  const best = Math.max(...setReps.map(r => r.mcv));
+  const top = best * 1.15;
+  for (const r of setReps.slice(-12)) {
+    const i = document.createElement('i');
+    i.style.height = (r.mcv / top * 100) + '%';
+    i.style.setProperty('--plate', ZONES.find(z => r.mcv >= z[0])[2]);
+    i.title = `${r.rep}: ${fmt(r.mcv)} m/s`;
+    if (r === setReps[setReps.length - 1]) i.className = 'last';
+    box.append(i);
+  }
+  const limit = document.createElement('div');
+  limit.className = 'limit';
+  limit.style.bottom = (best * (1 - dev.vlStop / 100) / top * 100) + '%';
+  box.append(limit);
+}
+
+function onLive(dv) {
+  if (dv.byteLength < 9) return;
+  live.push(dv.getInt16(4, true) / 1000);
+  if (live.length > 250) live.shift();  // 10 s przy 25 Hz
+  liveDirty = true;
+}
+
+// ---------------------------------------------------------------- głos i dźwięk
+// Prędkość czytana jak na siłowni: 0,62 m/s -> „sześćdziesiąt dwa”.
+function announce(r, stop) {
+  if ($('sound').checked) beep(stop ? 300 : 880, stop ? 0.5 : 0.08);
+  if (!$('voice').checked || !('speechSynthesis' in window)) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(String(Math.round(r.mcv * 100)) + (stop ? '. Stop' : ''));
+  u.lang = 'pl-PL';
+  u.rate = 1.1;
+  speechSynthesis.speak(u);
+}
+
+let audio;
+function beep(freq, dur) {
+  try {
+    audio = audio || new AudioContext();
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = freq; g.gain.value = 0.2;
+    o.connect(g).connect(audio.destination);
+    o.start(); o.stop(audio.currentTime + dur);
+  } catch (e) {}
+}
+
+// ---------------------------------------------------------------- wykres na żywo
+function draw() {
+  requestAnimationFrame(draw);
+  if (!liveDirty) return;
+  liveDirty = false;
+  const c = $('chart'), dpr = devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
+  const x = c.getContext('2d');
+  const css = getComputedStyle(document.body);
+  x.setTransform(dpr, 0, 0, dpr, 0, 0);
+  x.clearRect(0, 0, w, h);
+  const vmax = 2, y = v => h / 2 - (v / vmax) * (h / 2 - 4);
+  x.strokeStyle = css.getPropertyValue('--line'); x.lineWidth = 1;
+  for (const v of [-1, 0, 1]) { x.beginPath(); x.moveTo(0, y(v)); x.lineTo(w, y(v)); x.stroke(); }
+  x.fillStyle = css.getPropertyValue('--muted'); x.font = '12px Barlow, system-ui';
+  x.fillText('+1', 2, y(1) - 3); x.fillText('0', 2, y(0) - 3); x.fillText('−1', 2, y(-1) - 3);
+  x.strokeStyle = css.getPropertyValue('--fg'); x.lineWidth = 2; x.beginPath();
+  live.forEach((v, i) => { const px = (i / 249) * w; i ? x.lineTo(px, y(v)) : x.moveTo(px, y(v)); });
+  x.stroke();
+}
+draw();
+
+// ---------------------------------------------------------------- instalacja i praca offline
 let installEvt = null;
 window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installEvt = e; $('install').hidden = false; });
 $('install').onclick = async () => {
@@ -206,86 +572,53 @@ $('install').onclick = async () => {
   installEvt = null;
   $('install').hidden = true;
 };
-if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js');
+if ('serviceWorker' in navigator && location.protocol !== 'file:' && !DEMO) navigator.serviceWorker.register('sw.js');
 
-async function send(bytes) { if (ctrl) await ctrl.writeValueWithResponse(new Uint8Array(bytes)); }
-const u16 = x => [x & 255, (x >> 8) & 255];
-$('start').onclick = () => send([0x01, ...u16(Math.round(parseFloat($('load').value || 0) * 10))]);
-$('end').onclick = () => send([0x02]);
-$('calib').onclick = () => send([0x03]);
-$('calib6').onclick = () => send([0x08]);
-$('dir').onclick = () => send([0x06]);
-$('setvl').onclick = () => send([0x05, Math.round(parseFloat($('vlstop').value))]);
-
-function onStatus(dv) {
-  if (dv.byteLength < 11) return;
-  const state = dv.getUint8(0), active = dv.getUint8(1);
-  const up = dv.getUint8(8);
-  vlStop = dv.getUint8(7);
-  $('state').textContent = STATES[state] + (active ? ' · seria ' + dv.getUint16(2, true) : '') + (up ? '' : ' · koncentryczna w dół');
-  if (document.activeElement !== $('load')) $('load').value = dv.getUint16(5, true) / 10;
-  if (document.activeElement !== $('vlstop')) $('vlstop').value = vlStop;
+// ---------------------------------------------------------------- tryb demo (?demo): podgląd bez czujnika
+let demo = null;
+function demoStatus() {
+  const b = new DataView(new ArrayBuffer(11));
+  b.setUint8(0, 1); b.setUint8(1, demo.active ? 1 : 0); b.setUint16(2, demo.set, true); b.setUint8(4, demo.rep);
+  b.setUint16(5, Math.round(loadKg() * 10), true); b.setUint8(7, demo.vlStop); b.setUint8(8, demo.up ? 1 : 0);
+  onStatus(b);
 }
-
-function onRep(dv) {
-  if (dv.byteLength < 20) return;
-  const r = {
-    set: dv.getUint16(0, true), rep: dv.getUint8(2), mcv: dv.getUint16(3, true) / 1000,
-    mpv: dv.getUint16(5, true) / 1000, peak: dv.getUint16(7, true) / 1000, rom: dv.getUint16(9, true) / 10,
-    conc: dv.getUint16(11, true) / 1000, power: dv.getUint16(15, true), flags: dv.getUint8(17),
-    vl: dv.getUint16(18, true) / 10,
-  };
-  if (r.set !== currentSet) { currentSet = r.set; $('tbody').innerHTML = ''; }
-  const zone = ZONES.find(z => r.mcv >= z[0]);
-  $('mcv').textContent = r.mcv.toFixed(2);
-  $('mcv').style.color = zone[2];
-  $('zone').textContent = zone[1];
-  $('reps').textContent = r.rep;
-  $('peak').textContent = r.peak.toFixed(2);
-  $('rom').textContent = r.rom.toFixed(0);
-  $('vl').textContent = r.vl.toFixed(0) + '%';
-  $('vl').style.color = r.flags & 8 ? 'var(--bad)' : r.vl > vlStop * 0.7 ? 'var(--warn)' : 'var(--fg)';
-  const tr = document.createElement('tr');
-  tr.innerHTML = `<td>${r.rep}</td><td>${r.mcv.toFixed(2)}</td><td>${r.mpv.toFixed(2)}</td><td>${r.peak.toFixed(2)}</td>` +
-    `<td>${r.rom.toFixed(0)}</td><td>${r.conc.toFixed(2)}</td><td>${r.power || '–'}</td><td>${r.vl.toFixed(1)}</td>`;
-  $('tbody').prepend(tr);
-  if ($('sound').checked) beep(r.flags & 8 ? 300 : 880, r.flags & 8 ? 0.5 : 0.08);
-  if (r.flags & 8 && navigator.vibrate) navigator.vibrate([200, 100, 200]);
+function demoCommand(bytes) {
+  const op = bytes[0];
+  if (op === 0x01) { demo.active = true; demo.set++; demo.rep = 0; demo.best = 0; demo.v0 = 0.62 + Math.random() * 0.25; }
+  if (op === 0x02) demo.active = false;
+  if (op === 0x05) demo.vlStop = bytes[1];
+  if (op === 0x06) demo.up = !!bytes[1];
+  demoStatus();
 }
-
-function onLive(dv) {
-  if (dv.byteLength < 9) return;
-  live.push(dv.getInt16(4, true) / 1000);
-  if (live.length > 250) live.shift();  // 10 s przy 25 Hz
+if (DEMO) {
+  demo = { active: false, set: 0, rep: 0, best: 0, vlStop: 20, up: true, v0: 0.7 };
+  device = { name: 'PushBand-DEMO' };
+  setConnected(true);
+  showBattery(86);
+  demoStatus();
+  let t = 0;
+  setInterval(() => {  // przebieg prędkości na żywo
+    t += 0.04;
+    const b = new DataView(new ArrayBuffer(9));
+    b.setInt16(4, demo.active ? Math.round(Math.sin(t * 2.2) * 700) : 0, true);
+    onLive(b);
+  }, 40);
+  setInterval(() => {  // kolejne powtórzenie co 2,6 s
+    if (!demo.active) return;
+    demo.rep++;
+    const mcv = Math.max(0.15, demo.v0 * (1 - 0.055 * (demo.rep - 1)) + (Math.random() - 0.5) * 0.03);
+    demo.best = Math.max(demo.best, mcv);
+    const vl = (1 - mcv / demo.best) * 100;
+    const b = new DataView(new ArrayBuffer(20));
+    b.setUint16(0, demo.set, true); b.setUint8(2, demo.rep); b.setUint16(3, Math.round(mcv * 1000), true);
+    b.setUint16(5, Math.round(mcv * 1080), true); b.setUint16(7, Math.round(mcv * 1650), true);
+    b.setUint16(9, 520 + Math.round(Math.random() * 30), true); b.setUint16(11, Math.round(520 / mcv), true);
+    b.setUint16(15, Math.round(loadKg() * 9.81 * mcv * 1.9), true);
+    b.setUint8(17, vl >= demo.vlStop ? FLAG_STOP : 0); b.setUint16(18, Math.round(vl * 10), true);
+    onRep(b);
+    demoStatus();
+  }, 2600);
 }
-
-let audio;
-function beep(freq, dur) {
-  audio = audio || new AudioContext();
-  const o = audio.createOscillator(), g = audio.createGain();
-  o.frequency.value = freq; g.gain.value = 0.15;
-  o.connect(g).connect(audio.destination);
-  o.start(); o.stop(audio.currentTime + dur);
-}
-
-function draw() {
-  const c = $('chart'), dpr = devicePixelRatio || 1;
-  const w = c.clientWidth, h = c.clientHeight;
-  if (c.width !== w * dpr) { c.width = w * dpr; c.height = h * dpr; }
-  const x = c.getContext('2d');
-  x.setTransform(dpr, 0, 0, dpr, 0, 0);
-  x.clearRect(0, 0, w, h);
-  const vmax = 2, y = v => h / 2 - (v / vmax) * (h / 2 - 4);
-  x.strokeStyle = '#2a313a'; x.lineWidth = 1;
-  for (const v of [-1, 0, 1]) { x.beginPath(); x.moveTo(0, y(v)); x.lineTo(w, y(v)); x.stroke(); }
-  x.fillStyle = '#8a94a3'; x.font = '11px system-ui';
-  x.fillText('+1', 2, y(1) - 2); x.fillText('0', 2, y(0) - 2); x.fillText('-1', 2, y(-1) - 2);
-  x.strokeStyle = '#58a6ff'; x.lineWidth = 2; x.beginPath();
-  live.forEach((v, i) => { const px = (i / 249) * w; i ? x.lineTo(px, y(v)) : x.moveTo(px, y(v)); });
-  x.stroke();
-  requestAnimationFrame(draw);
-}
-draw();
 </script>
 </body>
 </html>
