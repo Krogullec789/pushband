@@ -132,6 +132,40 @@
   .switch .sub { color: var(--dust); font-size: .9rem; }
   .done { background: var(--chalk) !important; color: var(--mat); font-weight: 600; }
 
+  /* --- ćwiczenie --- */
+  .ex { background: transparent; display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px;
+    font: 700 1.7rem/1.1 var(--num); }
+  .ex svg { width: 18px; height: 18px; opacity: .7; }
+  .ex-list { display: grid; gap: 6px; }
+  .ex-list button { text-align: left; min-height: 56px; font-size: 1.1rem; display: flex; justify-content: space-between; align-items: center; }
+  .ex-list button[aria-pressed="true"] { background: var(--chalk); color: var(--mat); font-weight: 600; }
+  .ex-add { display: flex; gap: 8px; margin-top: 12px; }
+  .ex-add input { flex: 1; min-width: 0; min-height: 52px; border-radius: 10px; border: 0; background: var(--mat); padding: 0 14px; }
+
+  /* --- historia (pełny ekran) --- */
+  dialog.full { margin: 0; width: 100%; max-width: none; height: 100dvh; max-height: none; border-radius: 0; background: var(--mat); }
+  dialog.full .sheet { max-width: 560px; margin: 0 auto; }
+  dialog.full .sheet-head { background: var(--mat); }
+  .hist-tools { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 8px; }
+  .day { margin-top: 22px; }
+  .day h3 { font: 700 1.35rem/1.2 var(--num); margin: 0 0 2px; }
+  .day h3::first-letter { text-transform: uppercase; }
+  .day .sum { margin: 0 0 10px; }
+  .set { background: var(--steel); border-radius: 12px; margin-bottom: 8px; }
+  .set-row { width: 100%; display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; text-align: left; padding: 12px 14px;
+    background: transparent; border-radius: 12px; }
+  .set-row .t { font: 700 1.3rem/1.2 var(--num); }
+  .set-row .m { color: var(--dust); font-size: .95rem; font-weight: 500; }
+  .set-row .v { grid-row: 1 / 3; grid-column: 2; align-self: center; text-align: right; font: 700 2.1rem/1 var(--num); }
+  .set-row .v small { display: block; font: 500 .85rem/1.2 Barlow, system-ui; color: var(--dust); }
+  .mini { grid-column: 1 / -1; display: flex; align-items: flex-end; gap: 3px; height: 30px; margin-top: 8px; }
+  .mini i { flex: 0 1 16px; background: var(--plate); border-radius: 2px 2px 0 0; min-height: 3px; }
+  .set-detail { padding: 0 14px 14px; }
+  .set-detail table { font-size: .95rem; }
+  .set-detail .row { margin-top: 12px; justify-content: space-between; }
+  .danger { color: #ff8a80; }
+  .sheet .hist-empty { color: var(--dust); margin-top: 40px; text-align: center; font-size: 1.1rem; }
+
   @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 </head>
@@ -141,6 +175,11 @@
     <button id="conn" class="conn" aria-live="polite">
       <span id="dot" class="dot"></span><span id="connText" class="conn-text">Brak połączenia</span><span id="batt" class="batt"></span>
     </button>
+    <button id="openHistory" class="icon" aria-label="Historia treningów">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3 4v4h4"/><path d="M12 7.5V12l3 2"/>
+      </svg>
+    </button>
     <button id="openSettings" class="icon" aria-label="Ustawienia">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
         <path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/>
@@ -149,6 +188,9 @@
   </header>
 
   <main class="readout">
+    <button id="exBtn" class="ex" aria-label="Zmień ćwiczenie"><span id="exName">Przysiad</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+    </button>
     <p id="setInfo" class="setinfo">Seria nie trwa</p>
     <output id="mcv" class="mcv" data-empty>–</output>
     <p class="unit">m/s</p>
@@ -221,6 +263,22 @@
   </div>
 </dialog>
 
+<dialog id="exercises" aria-labelledby="exTitle">
+  <div class="sheet">
+    <div class="sheet-head"><h2 id="exTitle">Ćwiczenie</h2><button id="closeEx" class="done">Gotowe</button></div>
+    <div id="exList" class="ex-list"></div>
+    <form id="exAdd" class="ex-add"><input id="exNew" placeholder="Inne ćwiczenie" aria-label="Nazwa nowego ćwiczenia" enterkeyhint="done" maxlength="40"><button>Dodaj</button></form>
+  </div>
+</dialog>
+
+<dialog id="history" class="full" aria-labelledby="histTitle">
+  <div class="sheet">
+    <div class="sheet-head"><h2 id="histTitle">Historia</h2><button id="closeHistory" class="done">Gotowe</button></div>
+    <div class="hist-tools"><button id="exportCsv">Eksportuj do CSV</button><button id="clearHistory" class="danger">Usuń całą historię</button></div>
+    <div id="histList"></div>
+  </div>
+</dialog>
+
 <script>
 const SVC = '7e1a0001-5c2b-4f6e-9a3d-1b2c3d4e5f60';
 const REP = '7e1a0002-5c2b-4f6e-9a3d-1b2c3d4e5f60';
@@ -237,6 +295,7 @@ const DEMO = new URLSearchParams(location.search).has('demo');
 let ctrl = null, device = null, wantConnected = false, wakeLock = null, connected = false;
 let dev = { state: -1, active: false, setId: 0, vlStop: 20, up: true };
 let setReps = [], shownSet = -1, loadEditedAt = 0;
+let curSet = null;  // seria zapisywana w historii
 const live = [];
 let liveDirty = false;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -446,6 +505,7 @@ function renderDevice() {
 function startNewSet(id) {
   shownSet = id;
   setReps = [];
+  curSet = null;
   document.body.dataset.alert = 'none';
   $('alertMsg').hidden = true;
   $('mcv').textContent = '–'; $('mcv').dataset.empty = '';
@@ -467,6 +527,7 @@ function onRep(dv) {
   if (r.set !== shownSet) startNewSet(r.set);
   if (setReps.some(x => x.rep === r.rep)) return;  // odczyt tej samej wartości po ponownym połączeniu
   setReps.push(r);
+  recordRep(r);
   const zone = ZONES.find(z => r.mcv >= z[0]);
   $('mcv').textContent = fmt(r.mcv); delete $('mcv').dataset.empty;
   $('zoneName').textContent = zone[1];
@@ -489,25 +550,29 @@ function onRep(dv) {
   announce(r, stop);
 }
 
-function renderBars() {
-  const box = $('bars');
+const plateOf = mcv => ZONES.find(z => mcv >= z[0])[2];
+
+// Słupki powtórzeń (ekran główny i historia). vlStop podany -> linia progu końca serii.
+function barsInto(box, reps, vlStop, markLast) {
   box.innerHTML = '';
-  if (!setReps.length) return;
-  const best = Math.max(...setReps.map(r => r.mcv));
+  if (!reps.length) return;
+  const best = Math.max(...reps.map(r => r.mcv));
   const top = best * 1.15;
-  for (const r of setReps.slice(-12)) {
+  for (const r of reps.slice(-12)) {
     const i = document.createElement('i');
     i.style.height = (r.mcv / top * 100) + '%';
-    i.style.setProperty('--plate', ZONES.find(z => r.mcv >= z[0])[2]);
+    i.style.setProperty('--plate', plateOf(r.mcv));
     i.title = `${r.rep}: ${fmt(r.mcv)} m/s`;
-    if (r === setReps[setReps.length - 1]) i.className = 'last';
+    if (markLast && r === reps[reps.length - 1]) i.className = 'last';
     box.append(i);
   }
+  if (vlStop == null) return;
   const limit = document.createElement('div');
   limit.className = 'limit';
-  limit.style.bottom = (best * (1 - dev.vlStop / 100) / top * 100) + '%';
+  limit.style.bottom = (best * (1 - vlStop / 100) / top * 100) + '%';
   box.append(limit);
 }
+const renderBars = () => barsInto($('bars'), setReps, dev.vlStop, true);
 
 function onLive(dv) {
   if (dv.byteLength < 9) return;
@@ -538,6 +603,218 @@ function beep(freq, dur) {
     o.start(); o.stop(audio.currentTime + dur);
   } catch (e) {}
 }
+
+// ---------------------------------------------------------------- historia treningów
+// Serie zapisują się w IndexedDB tej przeglądarki (na telefonie), po każdym powtórzeniu.
+// Tryb demo ma osobną bazę.
+const db = (() => {
+  let conn;
+  const open = () => conn || (conn = new Promise((res, rej) => {
+    const r = indexedDB.open(DEMO ? 'pushband-demo' : 'pushband', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('sets', { keyPath: 'key' });
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+  const run = async (mode, fn) => {
+    const d = await open();
+    return new Promise((res, rej) => {
+      const t = d.transaction('sets', mode);
+      const req = fn(t.objectStore('sets'));
+      t.oncomplete = () => res(req.result);
+      t.onerror = () => rej(t.error);
+    });
+  };
+  return {
+    put: s => run('readwrite', st => st.put(s)),
+    del: key => run('readwrite', st => st.delete(key)),
+    clear: () => run('readwrite', st => st.clear()),
+    all: () => run('readonly', st => st.getAll()),
+  };
+})();
+
+const NEW_SET_GAP = 60000;  // ms — dłuższa przerwa to nowa seria, nawet gdy numer serii z czujnika się powtarza
+let persistAsked = false;
+
+function recordRep(r) {
+  const now = Date.now();
+  if (!curSet || curSet.deviceSetId !== r.set || now - curSet.endedAt > NEW_SET_GAP) {
+    curSet = { key: now.toString(36) + Math.random().toString(36).slice(2, 6), startedAt: now, endedAt: now,
+      device: device ? device.name : '', deviceSetId: r.set, exercise: currentExercise(), load: loadKg(),
+      vlStop: dev.vlStop, reps: [] };
+  }
+  curSet.reps.push({ rep: r.rep, mcv: r.mcv, mpv: r.mpv, peak: r.peak, rom: r.rom, conc: r.conc, power: r.power,
+    vl: r.vl, flags: r.flags });
+  curSet.endedAt = now;
+  db.put(curSet).catch(e => console.warn(e));
+  // prośba, żeby przeglądarka nie czyściła danych przy braku miejsca
+  if (!persistAsked && navigator.storage && navigator.storage.persist) { persistAsked = true; navigator.storage.persist().catch(() => {}); }
+}
+
+// --- ćwiczenia
+const DEFAULT_EX = ['Przysiad', 'Wyciskanie leżąc', 'Martwy ciąg', 'Wyciskanie nad głowę', 'Wiosłowanie sztangą', 'Hip thrust'];
+const exercises = () => prefs.exercises || DEFAULT_EX;
+const currentExercise = () => prefs.exercise || exercises()[0];
+
+function setExercise(name) {
+  prefs.exercise = name;
+  savePrefs();
+  $('exName').textContent = name;
+  // zmiana w trakcie serii poprawia też zapisywaną serię
+  if (curSet && dev.active && curSet.deviceSetId === dev.setId) { curSet.exercise = name; db.put(curSet).catch(() => {}); }
+}
+
+function renderExList() {
+  const list = $('exList');
+  list.innerHTML = '';
+  for (const name of exercises()) {
+    const b = document.createElement('button');
+    b.textContent = name;
+    b.setAttribute('aria-pressed', name === currentExercise());
+    b.onclick = () => { setExercise(name); $('exercises').close(); };
+    list.append(b);
+  }
+}
+$('exName').textContent = currentExercise();
+$('exBtn').onclick = () => { renderExList(); $('exercises').showModal(); };
+$('closeEx').onclick = () => $('exercises').close();
+$('exercises').addEventListener('click', e => { if (e.target === $('exercises')) $('exercises').close(); });
+$('exAdd').onsubmit = e => {
+  e.preventDefault();
+  const name = $('exNew').value.trim();
+  if (!name) return;
+  if (!exercises().includes(name)) prefs.exercises = [...exercises(), name];
+  $('exNew').value = '';
+  setExercise(name);
+  $('exercises').close();
+};
+
+// --- ekran historii
+const plural = (n, one, few, many) => {
+  const t = n % 10, h = n % 100;
+  return n === 1 ? one : t >= 2 && t <= 4 && (h < 12 || h > 14) ? few : many;
+};
+const kg = v => fmt(v, v % 1 ? 1 : 0);
+
+async function renderHistory() {
+  const box = $('histList');
+  let sets;
+  try { sets = await db.all(); } catch (e) {
+    box.innerHTML = '<p class="hist-empty">Nie udało się odczytać historii z pamięci telefonu.</p>';
+    return;
+  }
+  sets.sort((a, b) => b.startedAt - a.startedAt);
+  $('exportCsv').disabled = $('clearHistory').disabled = !sets.length;
+  box.innerHTML = '';
+  if (!sets.length) {
+    box.innerHTML = '<p class="hist-empty">Nie ma jeszcze zapisanych serii.<br>Każda seria z czujnika zapisuje się tu sama.</p>';
+    return;
+  }
+  const days = new Map();
+  for (const s of sets) {
+    const k = new Date(s.startedAt).toDateString();
+    if (!days.has(k)) days.set(k, []);
+    days.get(k).push(s);
+  }
+  const today = new Date().toDateString();
+  for (const [k, list] of days) {
+    const sec = document.createElement('section');
+    sec.className = 'day';
+    sec.innerHTML = '<h3></h3><p class="sum"></p>';
+    const reps = list.reduce((n, s) => n + s.reps.length, 0);
+    sec.querySelector('h3').textContent = (k === today ? 'dziś, ' : '') +
+      new Date(list[0].startedAt).toLocaleDateString('pl-PL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    sec.querySelector('.sum').textContent = `${list.length} ${plural(list.length, 'seria', 'serie', 'serii')}, ` +
+      `${reps} ${plural(reps, 'powtórzenie', 'powtórzenia', 'powtórzeń')}`;
+    for (const s of list) sec.append(setCard(s));
+    box.append(sec);
+  }
+}
+
+function setCard(s) {
+  const el = document.createElement('div');
+  el.className = 'set';
+  el.innerHTML = '<button class="set-row" aria-expanded="false"><span class="t"></span><span class="m"></span>' +
+    '<span class="v"></span><span class="mini"></span></button><div class="set-detail" hidden></div>';
+  const best = Math.max(...s.reps.map(r => r.mcv));
+  const last = s.reps[s.reps.length - 1];
+  const time = new Date(s.startedAt).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+  el.querySelector('.t').textContent = `${s.exercise}, ${kg(s.load)} kg`;
+  el.querySelector('.m').textContent = `${time}, ${s.reps.length} powt., spadek ${Math.round(last.vl)}%`;
+  el.querySelector('.v').innerHTML = `${fmt(best)}<small>najlepsze m/s</small>`;
+  barsInto(el.querySelector('.mini'), s.reps, null, false);
+  const btn = el.querySelector('.set-row'), det = el.querySelector('.set-detail');
+  btn.onclick = () => {
+    const open = det.hidden;
+    det.hidden = !open;
+    btn.setAttribute('aria-expanded', open);
+    if (open && !det.firstChild) fillSetDetail(det, s);
+  };
+  return el;
+}
+
+function fillSetDetail(det, s) {
+  det.innerHTML = '<table><thead><tr><th>#</th><th>MCV</th><th>MPV</th><th>Vpeak</th><th>ROM cm</th><th>Moc W</th>' +
+    '<th>Spadek</th></tr></thead><tbody></tbody></table><div class="row"><span class="m"></span>' +
+    '<button class="danger">Usuń serię</button></div>';
+  const tb = det.querySelector('tbody');
+  for (const r of s.reps) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${r.rep}</td><td>${fmt(r.mcv)}</td><td>${fmt(r.mpv)}</td><td>${fmt(r.peak)}</td>` +
+      `<td>${r.rom.toFixed(0)}</td><td>${r.power || '–'}</td><td>${Math.round(r.vl)}%</td>`;
+    tb.append(tr);
+  }
+  const mean = s.reps.reduce((a, r) => a + r.mcv, 0) / s.reps.length;
+  det.querySelector('.m').textContent = `Średnio ${fmt(mean)} m/s`;
+  det.querySelector('button').onclick = async () => {
+    if (!confirm(`Usunąć serię: ${s.exercise}, ${kg(s.load)} kg, ${s.reps.length} powt.? Tego nie da się cofnąć.`)) return;
+    await db.del(s.key);
+    if (curSet && curSet.key === s.key) curSet = null;
+    renderHistory();
+  };
+}
+
+$('openHistory').onclick = () => { renderHistory(); $('history').showModal(); };
+$('closeHistory').onclick = () => $('history').close();
+$('clearHistory').onclick = async () => {
+  if (!confirm('Usunąć wszystkie zapisane serie? Tego nie da się cofnąć.')) return;
+  await db.clear();
+  curSet = null;
+  renderHistory();
+};
+
+// --- eksport: jeden wiersz na powtórzenie; średnik i przecinek dziesiętny dla polskiego Excela
+$('exportCsv').onclick = async () => {
+  const sets = (await db.all()).sort((a, b) => a.startedAt - b.startedAt);
+  const num = (v, d) => v.toFixed(d).replace('.', ',');
+  const rows = [['data', 'godzina', 'ćwiczenie', 'ciężar kg', 'seria', 'powtórzenie', 'MCV m/s', 'MPV m/s', 'Vpeak m/s',
+    'ROM cm', 'czas konc. s', 'moc W', 'spadek %']];
+  let day = '', n = 0;
+  for (const s of sets) {
+    const d = new Date(s.startedAt);
+    const date = d.toLocaleDateString('sv-SE');  // RRRR-MM-DD
+    if (date !== day) { day = date; n = 0; }
+    n++;
+    const time = d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+    const ex = '"' + s.exercise.replace(/"/g, '""') + '"';
+    for (const r of s.reps) {
+      rows.push([date, time, ex, num(s.load, 1), n, r.rep, num(r.mcv, 3), num(r.mpv, 3), num(r.peak, 3), num(r.rom, 0),
+        num(r.conc, 2), r.power, num(r.vl, 1)]);
+    }
+  }
+  const name = `pushband-${new Date().toLocaleDateString('sv-SE')}.csv`;
+  const file = new File(['﻿' + rows.map(r => r.join(';')).join('\r\n')], name, { type: 'text/csv' });
+  try {
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'PushBand: historia treningów' });
+      return;
+    }
+  } catch (e) { if (e.name === 'AbortError') return; }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+};
 
 // ---------------------------------------------------------------- wykres na żywo
 function draw() {
